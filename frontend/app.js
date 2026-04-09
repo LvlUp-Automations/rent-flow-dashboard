@@ -1,6 +1,6 @@
 // ─── CONFIG ────────────────────────────────────────────────
 // IMPORTANT: Change this to your Render backend URL after deployment
-const API_BASE = 'https://YOUR-BACKEND-NAME.onrender.com/api';
+const API_BASE = 'https://rent-flow-backend.onrender.com/api';
 // For local testing use: const API_BASE = 'http://localhost:5000/api';
 
 // ─── CHART INSTANCES ───────────────────────────────────────

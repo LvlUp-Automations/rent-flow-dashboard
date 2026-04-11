@@ -50,6 +50,13 @@ router.get('/:id', async (req, res) => {
 // POST /api/transactions - Create new
 router.post('/', async (req, res) => {
   try {
+    // Clean the amount - remove $ and commas, convert to number
+    if (req.body.amount) {
+      req.body.amount = parseFloat(
+        String(req.body.amount).replace(/[$,]/g, '')
+      );
+    }
+    
     const tx = new Transaction(req.body);
     await tx.save();
     res.status(201).json({ success: true, data: tx, message: 'Transaction created' });

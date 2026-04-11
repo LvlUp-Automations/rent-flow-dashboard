@@ -3,34 +3,31 @@ const mongoose = require('mongoose');
 const TransactionSchema = new mongoose.Schema({
   date: {
     type: Date,
-    required: true,
     default: Date.now
   },
   amount: {
     type: Number,
-    required: true
+    default: null
   },
   type: {
     type: String,
-    required: true,
-    enum: ['Rental', 'Deposit', 'Cleaning Fee', 'Late Fee', 'Other']
+    default: null
   },
   product: {
     type: String,
-    required: true
+    default: null
   },
   customer: {
     type: String,
-    required: true
+    default: null
   },
   notes: {
     type: String,
-    default: ''
+    default: null
   },
   status: {
     type: String,
-    enum: ['Completed', 'Pending', 'Refunded'],
-    default: 'Completed'
+    default: null
   }
 }, {
   timestamps: true

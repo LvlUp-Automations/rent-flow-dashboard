@@ -27,10 +27,16 @@ mongoose.connect(process.env.MONGODB_URI)
     console.error('❌ MongoDB Connection Error:', err.message);
     process.exit(1);
   });
-
+// Allow iframe embedding from GHL
+app.use((req, res, next) => {
+  res.removeHeader('X-Frame-Options');
+  res.setHeader('Content-Security-Policy', "frame-ancestors *");
+  next();
+});
 // ─── ROUTES ───────────────────────────────────────────────
 app.use('/api/transactions', require('./routes/transactions'));
 app.use('/api/stats', require('./routes/stats'));
+app.use('/dashboard', require('./routes/dashboard'));
 
 // Health check route
 app.get('/', (req, res) => {

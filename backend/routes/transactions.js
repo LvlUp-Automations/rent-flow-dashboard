@@ -99,7 +99,7 @@ router.post('/from-invoice', async (req, res) => {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${GHL_API_KEY}`,
-        'Version': '2021-07-28',
+        'Version': '2021-04-15',
         'Accept': 'application/json'
       }
     });

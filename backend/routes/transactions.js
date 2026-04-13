@@ -87,12 +87,13 @@ router.post('/from-invoice', async (req, res) => {
       });
     }
 
+    // Declare invoice variable before use
+    let invoice = null;
+
     // ─── Fetch invoice list from GHL API V2 ───
-    // Correct endpoint: GET https://services.leadconnectorhq.com/invoices/
-    // Query params: altId (location ID), altType=location, search (invoice number)
     console.log(`🔍 Searching GHL for invoice: ${invoiceNumber}`);
 
-    const searchUrl = `https://services.leadconnectorhq.com/invoices/?altId=${LOCATION_ID}&altType=location&search=${invoiceNumber}&limit=5`;
+    const searchUrl = `https://services.leadconnectorhq.com/invoices/?altId=${LOCATION_ID}&altType=location&search=${invoiceNumber}&limit=5&offset=0`;
 
     const response = await fetch(searchUrl, {
       method: 'GET',
@@ -108,10 +109,10 @@ router.post('/from-invoice', async (req, res) => {
     console.log(`📦 GHL API Response: ${responseText.substring(0, 500)}`);
 
     if (!response.ok) {
-      // If list endpoint fails, try fetching all invoices without search
+      // If search endpoint fails, try fetching all invoices without search
       console.log('⚠️ Search failed, trying without search param...');
 
-      const fallbackUrl = `https://services.leadconnectorhq.com/invoices/?altId=${LOCATION_ID}&altType=location&limit=50`;
+      const fallbackUrl = `https://services.leadconnectorhq.com/invoices/?altId=${LOCATION_ID}&altType=location&limit=50&offset=0`;
       const fallbackResponse = await fetch(fallbackUrl, {
         method: 'GET',
         headers: {
@@ -133,6 +134,7 @@ router.post('/from-invoice', async (req, res) => {
 
       const fallbackData = await fallbackResponse.json();
       const allInvoices = fallbackData.invoices || fallbackData.data || [];
+      console.log(`📋 Fallback found ${allInvoices.length} invoices, searching manually...`);
 
       // Search manually
       invoice = allInvoices.find(inv =>
@@ -149,10 +151,8 @@ router.post('/from-invoice', async (req, res) => {
       }
     }
 
-    let invoice;
-
+    // Parse the successful search response if we don't have an invoice yet
     if (!invoice) {
-      // Parse the successful search response
       let data;
       try {
         data = JSON.parse(responseText);

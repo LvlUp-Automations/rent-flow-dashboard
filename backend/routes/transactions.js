@@ -58,191 +58,204 @@ router.post('/', async (req, res) => {
   }
 });
 
-// POST /api/transactions/from-invoice - Auto-create from GHL invoice number via API
-router.post('/from-invoice', async (req, res) => {
-  try {
-    const { invoiceNumber } = req.body;
+// ─── Helper: Try to fetch invoice from GHL API ───
+async function fetchInvoiceFromGHL(invoiceNumber) {
+  const GHL_API_KEY = process.env.GHL_API_KEY;
+  const LOCATION_ID = process.env.GHL_LOCATION_ID || 'nmnVdM6ftybsBH4LqJKU';
 
-    if (!invoiceNumber) {
-      return res.status(400).json({ success: false, message: 'Invoice number is required' });
+  if (!GHL_API_KEY) return null;
+
+  // Try multiple API versions and URL formats
+  const attempts = [
+    {
+      url: `https://services.leadconnectorhq.com/invoices/?altId=${LOCATION_ID}&altType=location&search=${invoiceNumber}&limit=5&offset=0`,
+      version: '2021-04-15'
+    },
+    {
+      url: `https://services.leadconnectorhq.com/invoices/?altId=${LOCATION_ID}&altType=location&search=${invoiceNumber}&limit=5&offset=0`,
+      version: '2021-07-28'
+    },
+    {
+      url: `https://services.leadconnectorhq.com/invoices?altId=${LOCATION_ID}&altType=location&search=${invoiceNumber}&limit=5&offset=0`,
+      version: '2021-04-15'
+    },
+    {
+      url: `https://services.leadconnectorhq.com/invoices?altId=${LOCATION_ID}&altType=location&limit=20&offset=0`,
+      version: '2021-04-15'
     }
+  ];
 
-    const GHL_API_KEY = process.env.GHL_API_KEY;
-    if (!GHL_API_KEY) {
-      return res.status(500).json({ success: false, message: 'GHL API key not configured on server' });
-    }
+  for (const attempt of attempts) {
+    try {
+      console.log(`🔍 Trying GHL API: ${attempt.url} (version: ${attempt.version})`);
 
-    const LOCATION_ID = process.env.GHL_LOCATION_ID || 'nmnVdM6ftybsBH4LqJKU';
-
-    // Check for duplicates first
-    const existing = await Transaction.findOne({
-      notes: { $regex: invoiceNumber, $options: 'i' }
-    });
-    if (existing) {
-      return res.status(200).json({
-        success: true,
-        message: 'Invoice already synced',
-        data: existing,
-        duplicate: true
-      });
-    }
-
-    // Declare invoice variable before use
-    let invoice = null;
-
-    // ─── Fetch invoice list from GHL API V2 ───
-    console.log(`🔍 Searching GHL for invoice: ${invoiceNumber}`);
-
-    const searchUrl = `https://services.leadconnectorhq.com/invoices/?altId=${LOCATION_ID}&altType=location&search=${invoiceNumber}&limit=5&offset=0`;
-
-    const response = await fetch(searchUrl, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${GHL_API_KEY}`,
-        'Version': '2021-04-15',
-        'Accept': 'application/json'
-      }
-    });
-
-    const responseText = await response.text();
-    console.log(`📡 GHL API Status: ${response.status}`);
-    console.log(`📦 GHL API Response: ${responseText.substring(0, 500)}`);
-
-    if (!response.ok) {
-      // If search endpoint fails, try fetching all invoices without search
-      console.log('⚠️ Search failed, trying without search param...');
-
-      const fallbackUrl = `https://services.leadconnectorhq.com/invoices/?altId=${LOCATION_ID}&altType=location&limit=50&offset=0`;
-      const fallbackResponse = await fetch(fallbackUrl, {
+      const response = await fetch(attempt.url, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${GHL_API_KEY}`,
-          'Version': '2021-07-28',
+          'Version': attempt.version,
           'Accept': 'application/json'
         }
       });
 
-      if (!fallbackResponse.ok) {
-        const fallbackErr = await fallbackResponse.text();
-        console.error(`❌ Fallback also failed: ${fallbackResponse.status} - ${fallbackErr}`);
-        return res.status(502).json({
-          success: false,
-          message: `GHL API returned ${fallbackResponse.status}`,
-          error: fallbackErr
-        });
+      if (!response.ok) {
+        const errText = await response.text();
+        console.log(`⚠️ Attempt failed (${response.status}): ${errText.substring(0, 200)}`);
+        continue;
       }
 
-      const fallbackData = await fallbackResponse.json();
-      const allInvoices = fallbackData.invoices || fallbackData.data || [];
-      console.log(`📋 Fallback found ${allInvoices.length} invoices, searching manually...`);
-
-      // Search manually
-      invoice = allInvoices.find(inv =>
-        String(inv.invoiceNumber) === String(invoiceNumber) ||
-        String(inv.number) === String(invoiceNumber) ||
-        String(inv.invoiceNumber).includes(invoiceNumber)
-      );
-
-      if (!invoice) {
-        return res.status(404).json({
-          success: false,
-          message: `Invoice #${invoiceNumber} not found. ${allInvoices.length} invoices checked.`
-        });
-      }
-    }
-
-    // Parse the successful search response if we don't have an invoice yet
-    if (!invoice) {
-      let data;
-      try {
-        data = JSON.parse(responseText);
-      } catch (e) {
-        return res.status(502).json({
-          success: false,
-          message: 'Invalid JSON from GHL API',
-          raw: responseText.substring(0, 200)
-        });
-      }
-
+      const data = await response.json();
       const invoices = data.invoices || data.data || [];
-      console.log(`📋 Found ${invoices.length} invoices in search results`);
+      console.log(`📋 Got ${invoices.length} invoices from GHL`);
 
-      if (invoices.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: `Invoice #${invoiceNumber} not found in GHL`
-        });
-      }
+      if (invoices.length === 0) continue;
 
-      // Find exact match or take first
-      invoice = invoices.find(inv =>
+      // Find matching invoice
+      const match = invoices.find(inv =>
         String(inv.invoiceNumber) === String(invoiceNumber) ||
         String(inv.number) === String(invoiceNumber)
       ) || invoices[0];
+
+      if (match) {
+        console.log(`✅ Found invoice via API: ${match._id || match.id}`);
+        return match;
+      }
+    } catch (err) {
+      console.log(`⚠️ Attempt error: ${err.message}`);
+      continue;
+    }
+  }
+
+  console.log('❌ All GHL API attempts failed');
+  return null;
+}
+
+// POST /api/transactions/from-invoice - Auto-create from GHL webhook
+// Accepts: { invoiceNumber } (minimal - will try API lookup)
+// OR: { invoiceNumber, customer, amount, title, date, status, type } (full data from webhook)
+router.post('/from-invoice', async (req, res) => {
+  try {
+    const { invoiceNumber, customer, amount, title, date, status, type, notes } = req.body;
+
+    if (!invoiceNumber && !amount) {
+      return res.status(400).json({ success: false, message: 'Invoice number or amount is required' });
     }
 
-    console.log(`✅ Found invoice: ${invoice._id || invoice.id} - ${invoice.name || invoice.title}`);
+    // Check for duplicates
+    if (invoiceNumber) {
+      const existing = await Transaction.findOne({
+        notes: { $regex: invoiceNumber, $options: 'i' }
+      });
+      if (existing) {
+        return res.status(200).json({
+          success: true,
+          message: 'Invoice already synced',
+          data: existing,
+          duplicate: true
+        });
+      }
+    }
 
-    // ─── Extract data from invoice ───
-    let amount = invoice.total || invoice.amount || invoice.amountPaid || invoice.totalAmount || 0;
-    // GHL sometimes returns cents
-    if (amount > 10000) amount = amount / 100;
-    amount = parseFloat(String(amount).replace(/[$,]/g, ''));
+    // ─── STRATEGY 1: Try GHL API to get full invoice details ───
+    let invoice = null;
+    if (invoiceNumber) {
+      invoice = await fetchInvoiceFromGHL(invoiceNumber);
+    }
 
-    if (!amount || isNaN(amount) || amount <= 0) {
+    let txData = {};
+
+    if (invoice) {
+      // ─── Got invoice from API - extract all data ───
+      console.log('📦 Using GHL API data');
+
+      let apiAmount = invoice.total || invoice.amount || invoice.amountPaid || invoice.totalAmount || 0;
+      if (apiAmount > 10000) apiAmount = apiAmount / 100;
+      apiAmount = parseFloat(String(apiAmount).replace(/[$,]/g, ''));
+
+      const apiCustomer = invoice.contactName
+        || invoice.contactDetails?.name
+        || invoice.contact?.name
+        || (invoice.contact?.firstName ? `${invoice.contact.firstName} ${invoice.contact.lastName || ''}`.trim() : null)
+        || (invoice.contactDetails?.firstName ? `${invoice.contactDetails.firstName} ${invoice.contactDetails.lastName || ''}`.trim() : null)
+        || invoice.businessDetails?.name
+        || 'Unknown Customer';
+
+      const apiProduct = invoice.title
+        || invoice.name
+        || (invoice.items?.[0]?.name || invoice.items?.[0]?.description)
+        || `Invoice #${invoiceNumber}`;
+
+      let apiStatus = 'Pending';
+      const invStatus = (invoice.status || '').toLowerCase();
+      if (invStatus === 'paid' || invStatus === 'completed') apiStatus = 'Completed';
+      else if (invStatus === 'refunded' || invStatus === 'void') apiStatus = 'Refunded';
+
+      let apiType = 'Rental';
+      const itemText = (invoice.items || []).map(i => (i.name || i.description || '').toLowerCase()).join(' ');
+      if (itemText.includes('deposit')) apiType = 'Deposit';
+      else if (itemText.includes('clean')) apiType = 'Cleaning Fee';
+      else if (itemText.includes('late')) apiType = 'Late Fee';
+      else if (itemText.includes('delivery')) apiType = 'Delivery';
+
+      txData = {
+        date: invoice.createdAt || invoice.issueDate || invoice.dueDate || new Date(),
+        customer: apiCustomer,
+        product: apiProduct,
+        type: apiType,
+        amount: apiAmount,
+        status: apiStatus,
+        notes: `Auto-synced from Invoice #${invoiceNumber}`
+      };
+
+    } else {
+      // ─── STRATEGY 2: Use webhook data directly ───
+      console.log('📦 GHL API unavailable, using webhook data');
+
+      let webhookAmount = 0;
+      if (amount) {
+        webhookAmount = parseFloat(String(amount).replace(/[$,]/g, ''));
+      }
+
+      // Determine type from title
+      let webhookType = type || 'Rental';
+      if (title) {
+        const titleLower = title.toLowerCase();
+        if (titleLower.includes('deposit')) webhookType = 'Deposit';
+        else if (titleLower.includes('clean')) webhookType = 'Cleaning Fee';
+        else if (titleLower.includes('late')) webhookType = 'Late Fee';
+        else if (titleLower.includes('delivery')) webhookType = 'Delivery';
+      }
+
+      txData = {
+        date: date ? new Date(date) : new Date(),
+        customer: customer || 'Unknown Customer',
+        product: title || `Invoice #${invoiceNumber || 'N/A'}`,
+        type: webhookType,
+        amount: webhookAmount,
+        status: status || 'Completed',
+        notes: notes || `Auto-synced from Invoice #${invoiceNumber || 'N/A'}`
+      };
+    }
+
+    // Validate amount
+    if (!txData.amount || isNaN(txData.amount) || txData.amount <= 0) {
       return res.status(400).json({
         success: false,
-        message: 'Invoice has no valid amount',
-        raw: { total: invoice.total, amount: invoice.amount, amountPaid: invoice.amountPaid }
+        message: 'Invalid or zero amount',
+        raw: { amount: txData.amount, source: invoice ? 'API' : 'webhook' }
       });
     }
 
-    // Customer name
-    const customerName = invoice.contactName
-      || invoice.contactDetails?.name
-      || invoice.contact?.name
-      || (invoice.contact?.firstName ? `${invoice.contact.firstName} ${invoice.contact.lastName || ''}`.trim() : null)
-      || (invoice.contactDetails?.firstName ? `${invoice.contactDetails.firstName} ${invoice.contactDetails.lastName || ''}`.trim() : null)
-      || invoice.businessDetails?.name
-      || 'Unknown Customer';
-
-    // Product
-    const productName = invoice.title
-      || invoice.name
-      || (invoice.items?.[0]?.name || invoice.items?.[0]?.description)
-      || `Invoice #${invoiceNumber}`;
-
-    // Status
-    let txStatus = 'Pending';
-    const invStatus = (invoice.status || '').toLowerCase();
-    if (invStatus === 'paid' || invStatus === 'completed') txStatus = 'Completed';
-    else if (invStatus === 'refunded' || invStatus === 'void') txStatus = 'Refunded';
-
-    // Type from items
-    let txType = 'Rental';
-    const itemText = (invoice.items || []).map(i => (i.name || i.description || '').toLowerCase()).join(' ');
-    if (itemText.includes('deposit')) txType = 'Deposit';
-    else if (itemText.includes('clean')) txType = 'Cleaning Fee';
-    else if (itemText.includes('late')) txType = 'Late Fee';
-    else if (itemText.includes('delivery')) txType = 'Delivery';
-
-    // Create transaction
-    const tx = new Transaction({
-      date: invoice.createdAt || invoice.issueDate || invoice.dueDate || new Date(),
-      customer: customerName,
-      product: productName,
-      type: txType,
-      amount: amount,
-      status: txStatus,
-      notes: `Auto-synced from Invoice #${invoiceNumber}`
-    });
-
+    // Create and save
+    const tx = new Transaction(txData);
     await tx.save();
-    console.log(`✅ Transaction saved: $${tx.amount} - ${tx.customer} - ${tx.product}`);
+
+    console.log(`✅ Transaction saved: $${tx.amount} - ${tx.customer} - ${tx.product} (via ${invoice ? 'API' : 'webhook'})`);
 
     res.status(201).json({
       success: true,
       data: tx,
+      source: invoice ? 'ghl_api' : 'webhook_data',
       message: `Transaction created from Invoice #${invoiceNumber}`
     });
 

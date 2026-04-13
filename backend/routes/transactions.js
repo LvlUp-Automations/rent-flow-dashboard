@@ -180,9 +180,9 @@ router.post('/from-invoice', async (req, res) => {
         || invoice.businessDetails?.name
         || 'Unknown Customer';
 
-      const apiProduct = invoice.title
+      const apiProduct = (invoice.items?.[0]?.name || invoice.items?.[0]?.description)
+        || invoice.title
         || invoice.name
-        || (invoice.items?.[0]?.name || invoice.items?.[0]?.description)
         || `Invoice #${invoiceNumber}`;
 
       let apiStatus = 'Pending';

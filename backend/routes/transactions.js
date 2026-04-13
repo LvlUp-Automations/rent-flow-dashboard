@@ -180,9 +180,16 @@ router.post('/from-invoice', async (req, res) => {
         || invoice.businessDetails?.name
         || 'Unknown Customer';
 
-      const apiProduct = (invoice.items?.[0]?.name || invoice.items?.[0]?.description)
-        || invoice.title
+      // Log invoice keys to debug
+      console.log('📋 Invoice keys:', Object.keys(invoice));
+      console.log('📋 Invoice items:', JSON.stringify(invoice.items || invoice.lineItems || invoice.invoiceItems || 'none').substring(0, 300));
+
+      const items = invoice.items || invoice.lineItems || invoice.invoiceItems || [];
+      const firstItemName = items[0]?.name || items[0]?.description || items[0]?.title || items[0]?.productName || null;
+      
+      const apiProduct = firstItemName
         || invoice.name
+        || invoice.title
         || `Invoice #${invoiceNumber}`;
 
       let apiStatus = 'Pending';

@@ -47,13 +47,9 @@ router.get('/:id', async (req, res) => {
 // POST /api/transactions - Create new (manual or from frontend)
 router.post('/', async (req, res) => {
   try {
-    // Clean the amount - remove $ and commas, convert to number
     if (req.body.amount) {
-      req.body.amount = parseFloat(
-        String(req.body.amount).replace(/[$,]/g, '')
-      );
+      req.body.amount = parseFloat(String(req.body.amount).replace(/[$,]/g, ''));
     }
-
     const tx = new Transaction(req.body);
     await tx.save();
     res.status(201).json({ success: true, data: tx, message: 'Transaction created' });
@@ -76,7 +72,6 @@ router.post('/from-invoice', async (req, res) => {
       return res.status(500).json({ success: false, message: 'GHL API key not configured on server' });
     }
 
-    // Hardcoded location ID for Restroom Trailer Snapshot
     const LOCATION_ID = process.env.GHL_LOCATION_ID || 'nmnVdM6ftybsBH4LqJKU';
 
     // Check for duplicates first
@@ -92,75 +87,117 @@ router.post('/from-invoice', async (req, res) => {
       });
     }
 
-    // Fetch invoice from GHL API
+    // ─── Fetch invoice list from GHL API V2 ───
+    // Correct endpoint: GET https://services.leadconnectorhq.com/invoices/
+    // Query params: altId (location ID), altType=location, search (invoice number)
     console.log(`🔍 Searching GHL for invoice: ${invoiceNumber}`);
 
-    const searchUrl = `https://services.leadconnectorhq.com/invoices?altId=${LOCATION_ID}&altType=location&search=${invoiceNumber}&limit=5`;
+    const searchUrl = `https://services.leadconnectorhq.com/invoices/?altId=${LOCATION_ID}&altType=location&search=${invoiceNumber}&limit=5`;
 
     const response = await fetch(searchUrl, {
+      method: 'GET',
       headers: {
         'Authorization': `Bearer ${GHL_API_KEY}`,
         'Version': '2021-07-28',
-        'Content-Type': 'application/json'
+        'Accept': 'application/json'
       }
     });
 
+    const responseText = await response.text();
+    console.log(`📡 GHL API Status: ${response.status}`);
+    console.log(`📦 GHL API Response: ${responseText.substring(0, 500)}`);
+
     if (!response.ok) {
-      const errText = await response.text();
-      console.error(`❌ GHL API error: ${response.status} - ${errText}`);
-      return res.status(502).json({
-        success: false,
-        message: `GHL API returned ${response.status}`,
-        error: errText
+      // If list endpoint fails, try fetching all invoices without search
+      console.log('⚠️ Search failed, trying without search param...');
+
+      const fallbackUrl = `https://services.leadconnectorhq.com/invoices/?altId=${LOCATION_ID}&altType=location&limit=50`;
+      const fallbackResponse = await fetch(fallbackUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${GHL_API_KEY}`,
+          'Version': '2021-07-28',
+          'Accept': 'application/json'
+        }
       });
-    }
 
-    const data = await response.json();
-    console.log(`📦 GHL returned ${data.invoices?.length || 0} invoices`);
+      if (!fallbackResponse.ok) {
+        const fallbackErr = await fallbackResponse.text();
+        console.error(`❌ Fallback also failed: ${fallbackResponse.status} - ${fallbackErr}`);
+        return res.status(502).json({
+          success: false,
+          message: `GHL API returned ${fallbackResponse.status}`,
+          error: fallbackErr
+        });
+      }
 
-    // Find the matching invoice
-    let invoice = null;
-    if (data.invoices && data.invoices.length > 0) {
-      // Try exact match first
-      invoice = data.invoices.find(inv =>
-        inv.invoiceNumber === invoiceNumber ||
-        inv.number === invoiceNumber ||
-        String(inv.invoiceNumber) === String(invoiceNumber)
+      const fallbackData = await fallbackResponse.json();
+      const allInvoices = fallbackData.invoices || fallbackData.data || [];
+
+      // Search manually
+      invoice = allInvoices.find(inv =>
+        String(inv.invoiceNumber) === String(invoiceNumber) ||
+        String(inv.number) === String(invoiceNumber) ||
+        String(inv.invoiceNumber).includes(invoiceNumber)
       );
-      // If no exact match, take the first result
+
       if (!invoice) {
-        invoice = data.invoices[0];
+        return res.status(404).json({
+          success: false,
+          message: `Invoice #${invoiceNumber} not found. ${allInvoices.length} invoices checked.`
+        });
       }
     }
 
+    let invoice;
+
     if (!invoice) {
-      return res.status(404).json({
-        success: false,
-        message: `Invoice #${invoiceNumber} not found in GHL`,
-        searchUrl: searchUrl.replace(GHL_API_KEY, '***')
-      });
+      // Parse the successful search response
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (e) {
+        return res.status(502).json({
+          success: false,
+          message: 'Invalid JSON from GHL API',
+          raw: responseText.substring(0, 200)
+        });
+      }
+
+      const invoices = data.invoices || data.data || [];
+      console.log(`📋 Found ${invoices.length} invoices in search results`);
+
+      if (invoices.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: `Invoice #${invoiceNumber} not found in GHL`
+        });
+      }
+
+      // Find exact match or take first
+      invoice = invoices.find(inv =>
+        String(inv.invoiceNumber) === String(invoiceNumber) ||
+        String(inv.number) === String(invoiceNumber)
+      ) || invoices[0];
     }
 
-    console.log(`✅ Found invoice:`, JSON.stringify(invoice, null, 2).substring(0, 500));
+    console.log(`✅ Found invoice: ${invoice._id || invoice.id} - ${invoice.name || invoice.title}`);
 
-    // Extract amount - GHL may return in cents or dollars
-    let amount = invoice.total || invoice.amount || invoice.amountPaid || 0;
-    if (amount > 10000) {
-      amount = amount / 100; // Convert cents to dollars
-    }
-
-    // Clean amount
+    // ─── Extract data from invoice ───
+    let amount = invoice.total || invoice.amount || invoice.amountPaid || invoice.totalAmount || 0;
+    // GHL sometimes returns cents
+    if (amount > 10000) amount = amount / 100;
     amount = parseFloat(String(amount).replace(/[$,]/g, ''));
 
     if (!amount || isNaN(amount) || amount <= 0) {
       return res.status(400).json({
         success: false,
         message: 'Invoice has no valid amount',
-        invoiceData: { total: invoice.total, amount: invoice.amount, amountPaid: invoice.amountPaid }
+        raw: { total: invoice.total, amount: invoice.amount, amountPaid: invoice.amountPaid }
       });
     }
 
-    // Extract customer name
+    // Customer name
     const customerName = invoice.contactName
       || invoice.contactDetails?.name
       || invoice.contact?.name
@@ -169,30 +206,25 @@ router.post('/from-invoice', async (req, res) => {
       || invoice.businessDetails?.name
       || 'Unknown Customer';
 
-    // Extract product name
+    // Product
     const productName = invoice.title
       || invoice.name
-      || (invoice.items && invoice.items.length > 0 ? invoice.items[0].name || invoice.items[0].description : null)
+      || (invoice.items?.[0]?.name || invoice.items?.[0]?.description)
       || `Invoice #${invoiceNumber}`;
 
-    // Determine status
+    // Status
     let txStatus = 'Pending';
     const invStatus = (invoice.status || '').toLowerCase();
-    if (invStatus === 'paid' || invStatus === 'completed') {
-      txStatus = 'Completed';
-    } else if (invStatus === 'refunded' || invStatus === 'void') {
-      txStatus = 'Refunded';
-    }
+    if (invStatus === 'paid' || invStatus === 'completed') txStatus = 'Completed';
+    else if (invStatus === 'refunded' || invStatus === 'void') txStatus = 'Refunded';
 
-    // Determine type from items
+    // Type from items
     let txType = 'Rental';
-    const allItemNames = (invoice.items || [])
-      .map(i => (i.name || i.description || '').toLowerCase())
-      .join(' ');
-    if (allItemNames.includes('deposit')) txType = 'Deposit';
-    else if (allItemNames.includes('clean')) txType = 'Cleaning Fee';
-    else if (allItemNames.includes('late')) txType = 'Late Fee';
-    else if (allItemNames.includes('delivery')) txType = 'Delivery';
+    const itemText = (invoice.items || []).map(i => (i.name || i.description || '').toLowerCase()).join(' ');
+    if (itemText.includes('deposit')) txType = 'Deposit';
+    else if (itemText.includes('clean')) txType = 'Cleaning Fee';
+    else if (itemText.includes('late')) txType = 'Late Fee';
+    else if (itemText.includes('delivery')) txType = 'Delivery';
 
     // Create transaction
     const tx = new Transaction({
@@ -206,7 +238,6 @@ router.post('/from-invoice', async (req, res) => {
     });
 
     await tx.save();
-
     console.log(`✅ Transaction saved: $${tx.amount} - ${tx.customer} - ${tx.product}`);
 
     res.status(201).json({

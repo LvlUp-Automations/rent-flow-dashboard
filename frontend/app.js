@@ -1,7 +1,5 @@
 // ─── CONFIG ────────────────────────────────────────────────
-// IMPORTANT: Change this to your Render backend URL after deployment
 const API_BASE = 'https://rent-flow-backend.onrender.com/api';
-// For local testing use: const API_BASE = 'http://localhost:5000/api';
 
 // ─── CHART INSTANCES ───────────────────────────────────────
 let productChart = null;
@@ -18,16 +16,21 @@ function formatDate(dateStr) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-// ─── FETCH WITH ERROR HANDLING ─────────────────────────────
-async function apiFetch(endpoint) {
-  try {
-    const res = await fetch(API_BASE + endpoint);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } catch (err) {
-    console.error(`API Error [${endpoint}]:`, err.message);
-    return null;
+// ─── FETCH WITH ERROR HANDLING & RETRY ─────────────────────
+async function apiFetch(endpoint, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const res = await fetch(API_BASE + endpoint);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    } catch (err) {
+      console.error(`API Error [${endpoint}] attempt ${i + 1}:`, err.message);
+      if (i < retries) {
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
   }
+  return null;
 }
 
 // ─── LOAD DASHBOARD STATS ──────────────────────────────────
@@ -57,9 +60,21 @@ async function loadStats(startDate = '', endDate = '') {
   }
 }
 
-// ─── LOAD CHARTS ───────────────────────────────────────────
-const CHART_COLORS = ['#00ff88', '#4477ff', '#ff6688', '#ffaa00', '#aa44ff', '#00ccff'];
+// ─── CHART COLORS (Blue theme matching LevelUp logo) ───────
+const CHART_COLORS = [
+  '#3B82F6',  // Primary blue
+  '#2EAC57',  // Logo green
+  '#F5922A',  // Logo orange
+  '#8B5CF6',  // Purple
+  '#06B6D4',  // Cyan
+  '#EC4899',  // Pink
+  '#F59E0B',  // Amber
+  '#10B981',  // Emerald
+  '#6366F1',  // Indigo
+  '#EF4444'   // Red
+];
 
+// ─── LOAD CHARTS ───────────────────────────────────────────
 async function loadProductChart(startDate = '', endDate = '') {
   let url = '/stats/by-product';
   if (startDate && endDate) url += `?startDate=${startDate}&endDate=${endDate}`;
@@ -67,7 +82,7 @@ async function loadProductChart(startDate = '', endDate = '') {
   const result = await apiFetch(url);
   if (!result || !result.success) return;
 
-  const labels = result.data.map(r => r._id);
+  const labels = result.data.map(r => r._id || 'Unknown');
   const amounts = result.data.map(r => r.totalAmount);
 
   if (productChart) productChart.destroy();
@@ -117,7 +132,7 @@ async function loadTypeChart(startDate = '', endDate = '') {
   const result = await apiFetch(url);
   if (!result || !result.success) return;
 
-  const labels = result.data.map(r => r._id);
+  const labels = result.data.map(r => r._id || 'Unknown');
   const amounts = result.data.map(r => r.totalAmount);
 
   if (typeChart) typeChart.destroy();
@@ -172,11 +187,11 @@ async function loadTransactions(startDate = '', endDate = '') {
   tbody.innerHTML = result.data.map(tx => `
     <tr>
       <td>${formatDate(tx.date)}</td>
-      <td>${tx.customer}</td>
-      <td>${tx.product}</td>
-      <td>${tx.type}</td>
-      <td style="color: #00ff88; font-weight: 600;">${formatCurrency(tx.amount)}</td>
-      <td><span class="badge badge-${tx.status.toLowerCase()}">${tx.status}</span></td>
+      <td>${tx.customer || '—'}</td>
+      <td>${tx.product || '—'}</td>
+      <td>${tx.type || '—'}</td>
+      <td style="color: #3B82F6; font-weight: 600;">${formatCurrency(tx.amount)}</td>
+      <td><span class="badge badge-${(tx.status || 'pending').toLowerCase()}">${tx.status || '—'}</span></td>
       <td>
         <button class="btn-delete" onclick="deleteTransaction('${tx._id}')">Delete</button>
       </td>
@@ -198,17 +213,16 @@ function clearFilter() {
   loadAll();
 }
 
-function loadAll(start = '', end = '') {
-  loadStats(start, end);
-  loadProductChart(start, end);
-  loadTypeChart(start, end);
-  loadTransactions(start, end);
+async function loadAll(start = '', end = '') {
+  await loadStats(start, end);
+  await loadProductChart(start, end);
+  await loadTypeChart(start, end);
+  await loadTransactions(start, end);
 }
 
 // ─── ADD TRANSACTION MODAL ─────────────────────────────────
 function openModal() {
   document.getElementById('modalOverlay').classList.add('active');
-  // Set today's date as default
   document.getElementById('txDate').value = new Date().toISOString().split('T')[0];
 }
 
@@ -229,7 +243,6 @@ async function submitTransaction() {
     notes: document.getElementById('txNotes').value.trim()
   };
 
-  // Basic validation
   if (!payload.date || !payload.customer || !payload.product || !payload.amount) {
     alert('Please fill in all required fields (Date, Customer, Product, Amount)');
     return;
@@ -248,11 +261,10 @@ async function submitTransaction() {
     const data = await res.json();
     if (data.success) {
       closeModal();
-      // Reset form
       ['txDate','txCustomer','txProduct','txAmount','txNotes'].forEach(id => {
         document.getElementById(id).value = '';
       });
-      loadAll(); // Refresh everything
+      loadAll();
       alert('Transaction saved successfully!');
     } else {
       alert('Error: ' + (data.message || 'Could not save transaction'));

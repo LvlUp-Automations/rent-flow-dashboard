@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Rent Flow Solutions — Revenue Dashboard</title>
+  <title>LevelUp Automations — Revenue Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -14,8 +14,8 @@
   <!-- HEADER -->
   <header class="header">
     <div class="header-brand">
-      <span class="brand-label">RENT FLOW SOLUTIONS</span>
-      <h1 class="brand-title">RESTROOM TRAILER <span class="accent">REVENUE</span></h1>
+      <span class="brand-label">LEVELUP AUTOMATIONS</span>
+      <h1 class="brand-title">REVENUE <span class="accent">DASHBOARD</span></h1>
       <p class="brand-sub" id="lastTransaction">Loading...</p>
     </div>
     <button class="btn-add" onclick="openModal()">+ Add Transaction</button>
@@ -94,7 +94,7 @@
       <div class="chart-wrap"><canvas id="productChart"></canvas></div>
     </div>
     <div class="chart-card">
-      <h3 class="chart-title">Revenue by Type</h3>
+      <h3 class="chart-title">Revenue by Category</h3>
       <div class="chart-wrap"><canvas id="typeChart"></canvas></div>
     </div>
   </section>
@@ -109,7 +109,7 @@
             <th>Date</th>
             <th>Customer</th>
             <th>Product</th>
-            <th>Type</th>
+            <th>Category</th>
             <th>Amount</th>
             <th>Status</th>
             <th>Actions</th>
@@ -127,7 +127,7 @@
     <div class="modal">
       <div class="modal-header">
         <h2>Add Transaction</h2>
-        <button class="modal-close" onclick="closeModal()">✕</button>
+        <button class="modal-close" onclick="closeModal()">&#10005;</button>
       </div>
       <div class="modal-body">
         <div class="form-group">
@@ -140,15 +140,15 @@
         </div>
         <div class="form-group">
           <label>Product *</label>
-          <input type="text" id="txProduct" placeholder="e.g. Restroom Trailer 1" required />
+          <input type="text" id="txProduct" placeholder="e.g. 2 Stall Restroom Trailer" required />
         </div>
         <div class="form-group">
-          <label>Type *</label>
+          <label>Category *</label>
           <select id="txType">
-            <option value="Rental">Rental</option>
-            <option value="Deposit">Deposit</option>
-            <option value="Cleaning Fee">Cleaning Fee</option>
-            <option value="Late Fee">Late Fee</option>
+            <option value="Restroom Trailer Rental">Restroom Trailer Rental</option>
+            <option value="Porta Potty Rental">Porta Potty Rental</option>
+            <option value="Services">Services</option>
+            <option value="Add-Ons">Add-Ons</option>
             <option value="Other">Other</option>
           </select>
         </div>

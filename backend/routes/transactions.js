@@ -2,6 +2,41 @@ const express = require('express');
 const router = express.Router();
 const Transaction = require('../models/Transaction');
 
+// ─── Collection-to-Category mapping ───
+// Maps GHL product collection names to dashboard categories
+// Update this mapping when client adds new collections
+const COLLECTION_MAP = {
+  'restroom trailers': 'Restroom Trailer Rental',
+  'portable toilet': 'Porta Potty Rental',
+  'pump services': 'Services',
+  'add on services': 'Add-Ons',
+  'holding tanks': 'Add-Ons'
+};
+
+// Fallback: map product names to categories by keyword
+function detectCategory(productName, collectionName) {
+  // First try collection mapping
+  if (collectionName) {
+    const key = collectionName.toLowerCase().trim();
+    if (COLLECTION_MAP[key]) return COLLECTION_MAP[key];
+    // Partial match
+    for (const [pattern, category] of Object.entries(COLLECTION_MAP)) {
+      if (key.includes(pattern) || pattern.includes(key)) return category;
+    }
+  }
+
+  // Fallback: detect from product name
+  if (productName) {
+    const name = productName.toLowerCase();
+    if (name.includes('restroom') || name.includes('stall')) return 'Restroom Trailer Rental';
+    if (name.includes('porta') || name.includes('potty') || name.includes('toilet')) return 'Porta Potty Rental';
+    if (name.includes('pump') || name.includes('service') || name.includes('rv pump')) return 'Services';
+    if (name.includes('generator') || name.includes('water') || name.includes('delivery') || name.includes('setup') || name.includes('add')) return 'Add-Ons';
+  }
+
+  return 'Other';
+}
+
 // GET /api/transactions - Get all (with optional filters)
 router.get('/', async (req, res) => {
   try {
@@ -65,7 +100,6 @@ async function fetchInvoiceFromGHL(invoiceNumber) {
 
   if (!GHL_API_KEY) return null;
 
-  // Try multiple API versions and URL formats
   const attempts = [
     {
       url: `https://services.leadconnectorhq.com/invoices/?altId=${LOCATION_ID}&altType=location&search=${invoiceNumber}&limit=5&offset=0`,
@@ -110,7 +144,6 @@ async function fetchInvoiceFromGHL(invoiceNumber) {
 
       if (invoices.length === 0) continue;
 
-      // Find matching invoice
       const match = invoices.find(inv =>
         String(inv.invoiceNumber) === String(invoiceNumber) ||
         String(inv.number) === String(invoiceNumber)
@@ -130,9 +163,51 @@ async function fetchInvoiceFromGHL(invoiceNumber) {
   return null;
 }
 
+// ─── Helper: Try to fetch product details from GHL to get collection ───
+async function fetchProductCollection(productId) {
+  const GHL_API_KEY = process.env.GHL_API_KEY;
+  const LOCATION_ID = process.env.GHL_LOCATION_ID || 'nmnVdM6ftybsBH4LqJKU';
+
+  if (!GHL_API_KEY || !productId) return null;
+
+  try {
+    console.log(`🔍 Fetching product collection for: ${productId}`);
+
+    const response = await fetch(
+      `https://services.leadconnectorhq.com/products/${productId}?locationId=${LOCATION_ID}`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${GHL_API_KEY}`,
+          'Version': '2021-04-15',
+          'Accept': 'application/json'
+        }
+      }
+    );
+
+    if (!response.ok) {
+      console.log(`⚠️ Product fetch failed: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+    const product = data.product || data;
+
+    // Collection might be in collectionIds, collections, or category
+    const collectionName = product.collectionName
+      || product.category
+      || (product.collections && product.collections[0]?.name)
+      || null;
+
+    console.log(`📦 Product collection: ${collectionName || 'none found'}`);
+    return collectionName;
+  } catch (err) {
+    console.log(`⚠️ Product collection fetch error: ${err.message}`);
+    return null;
+  }
+}
+
 // POST /api/transactions/from-invoice - Auto-create from GHL webhook
-// Accepts: { invoiceNumber } (minimal - will try API lookup)
-// OR: { invoiceNumber, customer, amount, title, date, status, type } (full data from webhook)
 router.post('/from-invoice', async (req, res) => {
   try {
     const { invoiceNumber, customer, amount, title, date, status, type, notes } = req.body;
@@ -165,8 +240,8 @@ router.post('/from-invoice', async (req, res) => {
     let txData = {};
 
     if (invoice) {
-      // ─── Got invoice from API - extract all data ───
       console.log('📦 Using GHL API data');
+      console.log('📋 Invoice keys:', Object.keys(invoice));
 
       let apiAmount = invoice.total || invoice.amount || invoice.amountPaid || invoice.totalAmount || 0;
       if (apiAmount > 10000) apiAmount = apiAmount / 100;
@@ -180,29 +255,30 @@ router.post('/from-invoice', async (req, res) => {
         || invoice.businessDetails?.name
         || 'Unknown Customer';
 
-      // Log invoice keys to debug
-      console.log('📋 Invoice keys:', Object.keys(invoice));
-      console.log('📋 Invoice items:', JSON.stringify(invoice.items || invoice.lineItems || invoice.invoiceItems || 'none').substring(0, 300));
+      // Get items from invoiceItems or items
+      const items = invoice.invoiceItems || invoice.items || invoice.lineItems || [];
+      console.log(`📋 Invoice items (${items.length}):`, JSON.stringify(items).substring(0, 300));
 
-      const items = invoice.items || invoice.lineItems || invoice.invoiceItems || [];
-      const firstItemName = items[0]?.name || items[0]?.description || items[0]?.title || items[0]?.productName || null;
-      
-      const apiProduct = firstItemName
+      const firstItem = items[0] || {};
+      const apiProduct = firstItem.name || firstItem.description || firstItem.title || firstItem.productName
         || invoice.name
         || invoice.title
         || `Invoice #${invoiceNumber}`;
+
+      // Try to get collection/category from product
+      let collectionName = null;
+      if (firstItem.productId) {
+        collectionName = await fetchProductCollection(firstItem.productId);
+      }
+
+      // Determine category
+      const apiType = detectCategory(apiProduct, collectionName);
+      console.log(`📦 Category: ${apiType} (collection: ${collectionName}, product: ${apiProduct})`);
 
       let apiStatus = 'Pending';
       const invStatus = (invoice.status || '').toLowerCase();
       if (invStatus === 'paid' || invStatus === 'completed') apiStatus = 'Completed';
       else if (invStatus === 'refunded' || invStatus === 'void') apiStatus = 'Refunded';
-
-      let apiType = 'Rental';
-      const itemText = (invoice.items || []).map(i => (i.name || i.description || '').toLowerCase()).join(' ');
-      if (itemText.includes('deposit')) apiType = 'Deposit';
-      else if (itemText.includes('clean')) apiType = 'Cleaning Fee';
-      else if (itemText.includes('late')) apiType = 'Late Fee';
-      else if (itemText.includes('delivery')) apiType = 'Delivery';
 
       txData = {
         date: invoice.createdAt || invoice.issueDate || invoice.dueDate || new Date(),
@@ -223,15 +299,7 @@ router.post('/from-invoice', async (req, res) => {
         webhookAmount = parseFloat(String(amount).replace(/[$,]/g, ''));
       }
 
-      // Determine type from title
-      let webhookType = type || 'Rental';
-      if (title) {
-        const titleLower = title.toLowerCase();
-        if (titleLower.includes('deposit')) webhookType = 'Deposit';
-        else if (titleLower.includes('clean')) webhookType = 'Cleaning Fee';
-        else if (titleLower.includes('late')) webhookType = 'Late Fee';
-        else if (titleLower.includes('delivery')) webhookType = 'Delivery';
-      }
+      const webhookType = type || detectCategory(title, null);
 
       txData = {
         date: date ? new Date(date) : new Date(),
@@ -257,7 +325,7 @@ router.post('/from-invoice', async (req, res) => {
     const tx = new Transaction(txData);
     await tx.save();
 
-    console.log(`✅ Transaction saved: $${tx.amount} - ${tx.customer} - ${tx.product} (via ${invoice ? 'API' : 'webhook'})`);
+    console.log(`✅ Transaction saved: $${tx.amount} - ${tx.customer} - ${tx.product} [${tx.type}] (via ${invoice ? 'API' : 'webhook'})`);
 
     res.status(201).json({
       success: true,

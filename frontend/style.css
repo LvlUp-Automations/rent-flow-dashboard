@@ -3,8 +3,9 @@
   --surface: #111111;
   --surface2: #161616;
   --border: #1f1f1f;
-  --accent: #00ff88;
-  --accent2: #4477ff;
+  --accent: #3B82F6;
+  --accent2: #2EAC57;
+  --accent3: #F5922A;
   --text: #ffffff;
   --text-muted: #888888;
   --danger: #ff4444;
@@ -29,7 +30,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
-  background-image: radial-gradient(ellipse at 80% 50%, rgba(0,255,136,0.04) 0%, transparent 60%);
+  background-image: radial-gradient(ellipse at 80% 50%, rgba(59,130,246,0.06) 0%, transparent 60%);
 }
 
 .brand-label {
@@ -87,7 +88,7 @@ body {
 
 .btn-add:hover {
   background: var(--accent);
-  color: #000;
+  color: #fff;
 }
 
 /* FILTER BAR */
@@ -118,7 +119,7 @@ body {
 .btn-apply {
   background: var(--accent);
   border: none;
-  color: #000;
+  color: #fff;
   padding: 8px 20px;
   font-family: 'Barlow Condensed', sans-serif;
   font-size: 13px;
@@ -284,7 +285,7 @@ body {
   border-radius: 2px;
 }
 
-.badge-completed { background: rgba(0,255,136,0.12); color: var(--accent); }
+.badge-completed { background: rgba(59,130,246,0.12); color: var(--accent); }
 .badge-pending { background: rgba(255,170,0,0.12); color: var(--warning); }
 .badge-refunded { background: rgba(255,68,68,0.12); color: var(--danger); }
 
@@ -400,7 +401,7 @@ body {
   width: 100%;
   background: var(--accent);
   border: none;
-  color: #000;
+  color: #fff;
   padding: 14px;
   font-family: 'Barlow Condensed', sans-serif;
   font-size: 15px;

@@ -16,6 +16,10 @@
 
 body {
   background: var(--bg);
+  background-image: 
+    linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+  background-size: 40px 40px;
   color: var(--text);
   font-family: 'Barlow', sans-serif;
   min-height: 100vh;
@@ -33,12 +37,13 @@ body {
 
 .brand-label {
   font-family: 'Barlow Condensed', sans-serif;
-  font-size: 11px;
-  letter-spacing: 4px;
+  font-size: 15px;
+  letter-spacing: 5px;
   color: var(--accent);
   text-transform: uppercase;
   display: block;
   margin-bottom: 8px;
+  font-weight: 600;
 }
 
 .brand-title {
@@ -164,9 +169,10 @@ body {
 }
 
 .stat-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
-  border-color: rgba(59,130,246,0.3);
+  transform: translateY(-4px);
+  box-shadow: 0 8px 30px rgba(59,130,246,0.25), 0 4px 12px rgba(0,0,0,0.4);
+  border-color: rgba(59,130,246,0.5);
+  background: #151520;
 }
 
 .stat-card::after {
